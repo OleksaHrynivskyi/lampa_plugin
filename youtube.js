@@ -1,86 +1,57 @@
 (function () {
   'use strict';
 
-  var YT_API_KEY  = 'AIzaSyB7nB5pUEVbHa-bGy1LN2KtzY7jU7ElazQ';
-  var YT_API      = 'https://www.googleapis.com/youtube/v3';
+  var YT_API_KEY = 'AIzaSyB7nB5pUEVbHa-bGy1LN2KtzY7jU7ElazQ';
+  var YT_API     = 'https://www.googleapis.com/youtube/v3';
 
-  // ── Список Invidious серверів (fallback по черзі) ──────
-  var INVIDIOUS_INSTANCES = [
-    'https://inv.nadeko.net',
-    'https://invidious.nerdvpn.de',
-    'https://iv.datura.network',
-    'https://invidious.privacydev.net',
-  ];
-
-  function tryInvidious(videoId, title, instanceIndex) {
-    if (instanceIndex >= INVIDIOUS_INSTANCES.length) {
-      Lampa.Loading.stop();
-      Lampa.Noty.show('Всі Invidious сервери недоступні. Спробуйте пізніше.');
-      return;
-    }
-
-    var host = INVIDIOUS_INSTANCES[instanceIndex];
-
-    $.ajax({
-      url:      host + '/api/v1/videos/' + videoId,
-      timeout:  12000,
-      dataType: 'json',
-      success:  function (data) {
-        Lampa.Loading.stop();
-
-        // Збираємо формати: спочатку adaptiveFormats, потім formatStreams
-        var formats = []
-          .concat(data.adaptiveFormats || [])
-          .concat(data.formatStreams   || [])
-          .filter(function (f) {
-            return f.url && f.type && f.type.indexOf('video/mp4') !== -1;
-          })
-          .sort(function (a, b) {
-            // Сортуємо за якістю (resolution або bitrate)
-            var qa = parseInt((a.resolution || '0').replace('p', '')) || (a.bitrate || 0);
-            var qb = parseInt((b.resolution || '0').replace('p', '')) || (b.bitrate || 0);
-            return qb - qa;
-          });
-
-        if (!formats.length) {
-          // Цей сервер не дав форматів — пробуємо наступний
-          tryInvidious(videoId, title, instanceIndex + 1);
-          return;
-        }
-
-        // Будуємо список якостей для плеєра
-        var quality = formats.map(function (f) {
-          return {
-            url:   f.url,
-            label: f.resolution || (Math.round((f.bitrate || 0) / 1000) + 'k'),
-          };
-        });
-
-        Lampa.Player.play({
-          method:  'play',
-          title:   title,
-          url:     quality[0].url,
-          quality: quality,
-          type:    'video/mp4',
-        });
-      },
-      error: function (xhr) {
-        if (xhr.statusText === 'abort') { Lampa.Loading.stop(); return; }
-        // Сервер не відповів — пробуємо наступний
-        tryInvidious(videoId, title, instanceIndex + 1);
-      },
-    });
-  }
-
+  // ── Cobalt API ───────────────────────────────────────────
   function openVideo(videoId, title) {
     if (!videoId) return;
-    Lampa.Loading.start(function () {
-      // Кнопка скасування
+
+    Lampa.Loading.start(function () {});
+
+    $.ajax({
+      url:         'https://api.cobalt.tools/api/json',
+      method:      'POST',
+      contentType: 'application/json',
+      data: JSON.stringify({
+        url:         'https://www.youtube.com/watch?v=' + videoId,
+        vCodec:      'h264',
+        vQuality:    '720',
+        isAudioOnly: false,
+      }),
+      timeout:  20000,
+      dataType: 'json',
+      success: function (data) {
+        Lampa.Loading.stop();
+
+        if (data && data.url) {
+          Lampa.Player.play({
+            method: 'play',
+            title:  title,
+            url:    data.url,
+            type:   'video/mp4',
+          });
+        } else if (data && data.picker && data.picker.length) {
+          Lampa.Player.play({
+            method: 'play',
+            title:  title,
+            url:    data.picker[0].url,
+            type:   'video/mp4',
+          });
+        } else {
+          Lampa.Noty.show('Cobalt не зміг отримати відео');
+        }
+      },
+      error: function (xhr) {
+        Lampa.Loading.stop();
+        if (xhr.statusText === 'abort') return;
+        Lampa.Noty.show('Помилка з\'єднання з Cobalt');
+      },
     });
-    tryInvidious(videoId, title, 0);
   }
 
-  // ── YouTube Data API ────────────────────────────────────
+  // ── YouTube Data API ─────────────────────────────────────
   function ytFetch(endpoint, params, onSuccess, onError) {
     params.key = YT_API_KEY;
     $.ajax({
@@ -100,7 +71,7 @@
     });
   }
 
-  // ── CSS ─────────────────────────────────────────────────
+  // ── CSS ──────────────────────────────────────────────────
   var cssInjected = false;
   function injectCSS() {
     if (cssInjected) return;
@@ -129,7 +100,7 @@
   };
 
   // ═══════════════════════════════════════════════════════
-  //  Компонент (решта коду залишається без змін)
+  //  Компонент
   // ═══════════════════════════════════════════════════════
   function YouTubeFeed(object) {
     var scroll      = new Lampa.Scroll({ mask: true, over: true });
@@ -149,6 +120,7 @@
       { id: 'search', title: 'Пошук',   icon: ICONS.search },
     ];
 
+    // ── Контролери ───────────────────────────────────────
     var ctrl_head = {
       toggle: function () {
         active_zone = 'head';
@@ -161,7 +133,7 @@
       right: function () { Navigator.canmove('right') && Navigator.move('right'); },
       up:    function () {},
       down:  function () { body.find('.selector').length && Lampa.Controller.toggle('content'); },
-      back:  function () { Lampa.Activity.backward(); }
+      back:  function () { Lampa.Activity.backward(); },
     };
 
     var ctrl_content = {
@@ -180,25 +152,30 @@
       right: function () { Navigator.canmove('right') && Navigator.move('right'); },
       up:    function () { Navigator.canmove('up') ? Navigator.move('up') : Lampa.Controller.toggle('head'); },
       down:  function () { Navigator.canmove('down') && Navigator.move('down'); },
-      back:  function () { Lampa.Activity.backward(); }
+      back:  function () { Lampa.Activity.backward(); },
     };
 
+    // ── Створення ────────────────────────────────────────
     this.create = function () {
       injectCSS();
+
       TABS.forEach(function (tab) {
         var btn = $('<div class="ytfeed-tab selector">' + tab.icon + '<span>' + tab.title + '</span></div>');
         if (tab.id === activeTab) btn.addClass('active');
         tabButtons[tab.id] = btn;
+
         btn.on('hover:focus',           function () { btn.addClass('focus'); last_tab = btn[0]; });
         btn.on('hover:hover',           function () { btn.addClass('focus'); });
         btn.on('hover:exit hover:blur', function () { btn.removeClass('focus'); });
         btn.on('hover:enter',           function () { switchTab(tab.id); });
         head.append(btn);
       });
+
       html.append(head);
       html.append(scroll.render());
       scroll.minus(head);
       scroll.append(body);
+
       object.activity.loader(true);
       loadHome();
       return this.render();
@@ -215,15 +192,21 @@
     }
 
     function resetBody() {
-      body.empty(); last_card = null;
+      body.empty();
+      last_card = null;
       if (currentAjax) { currentAjax.abort(); currentAjax = null; }
     }
 
+    // ── Завантаження ─────────────────────────────────────
     function loadHome() {
-      resetBody(); object.activity.loader(true);
+      resetBody();
+      object.activity.loader(true);
       ytFetch('/videos', {
-        part: 'snippet,contentDetails', chart: 'mostPopular',
-        regionCode: 'UA', hl: 'uk', maxResults: 30,
+        part:        'snippet,contentDetails',
+        chart:       'mostPopular',
+        regionCode:  'UA',
+        hl:          'uk',
+        maxResults:  30,
       }, function (data) {
         object.activity.loader(false);
         var items = data.items || [];
@@ -231,47 +214,71 @@
         buildGrid('Популярне в Україні 🇺🇦', items, true);
         activateContent();
       }, function (msg) {
-        object.activity.loader(false); showEmpty('Помилка: ' + msg); activateContent();
+        object.activity.loader(false);
+        showEmpty('Помилка: ' + msg);
+        activateContent();
       });
     }
 
     function loadTrending() {
-      resetBody(); object.activity.loader(true);
+      resetBody();
+      object.activity.loader(true);
       ytFetch('/videos', {
-        part: 'snippet,contentDetails', chart: 'mostPopular',
-        regionCode: 'UA', hl: 'uk', videoCategoryId: '10', maxResults: 20,
+        part:             'snippet,contentDetails',
+        chart:            'mostPopular',
+        regionCode:       'UA',
+        hl:               'uk',
+        videoCategoryId:  '10',
+        maxResults:       20,
       }, function (music) {
         buildGrid('Музика 🎵', music.items || [], true);
         ytFetch('/videos', {
-          part: 'snippet,contentDetails', chart: 'mostPopular',
-          regionCode: 'UA', hl: 'uk', videoCategoryId: '20', maxResults: 20,
+          part:             'snippet,contentDetails',
+          chart:            'mostPopular',
+          regionCode:       'UA',
+          hl:               'uk',
+          videoCategoryId:  '20',
+          maxResults:       20,
         }, function (gaming) {
           object.activity.loader(false);
           buildGrid('Ігри 🎮', gaming.items || [], true);
           activateContent();
-        }, function () { object.activity.loader(false); activateContent(); });
+        }, function () {
+          object.activity.loader(false);
+          activateContent();
+        });
       }, function (msg) {
-        object.activity.loader(false); showEmpty('Помилка: ' + msg); activateContent();
+        object.activity.loader(false);
+        showEmpty('Помилка: ' + msg);
+        activateContent();
       });
     }
 
     function openSearch() {
-      Lampa.Input.edit({ title: 'Пошук YouTube', value: lastSearch, free: true, nosave: true },
+      Lampa.Input.edit(
+        { title: 'Пошук YouTube', value: lastSearch, free: true, nosave: true },
         function (value) {
           if (value && value.trim()) { lastSearch = value.trim(); doSearch(lastSearch); }
           else Lampa.Controller.toggle(active_zone);
-        });
+        }
+      );
     }
 
     function doSearch(query) {
-      resetBody(); object.activity.loader(true);
+      resetBody();
+      object.activity.loader(true);
       ytFetch('/search', {
-        part: 'snippet', q: query, type: 'video',
-        regionCode: 'UA', hl: 'uk', maxResults: 30,
+        part:       'snippet',
+        q:          query,
+        type:       'video',
+        regionCode: 'UA',
+        hl:         'uk',
+        maxResults: 30,
       }, function (data) {
         object.activity.loader(false);
         var items = data.items || [];
         if (!items.length) { showEmpty('Нічого: «' + query + '»'); activateContent(); return; }
+
         var ids = items.map(function (i) { return i.id.videoId; }).join(',');
         ytFetch('/videos', { part: 'contentDetails', id: ids }, function (details) {
           var dur = {};
@@ -279,12 +286,18 @@
           items.forEach(function (i) { i._duration = dur[i.id.videoId] || ''; });
           buildSearchGrid('Результати: ' + query, items);
           activateContent();
-        }, function () { buildSearchGrid('Результати: ' + query, items); activateContent(); });
+        }, function () {
+          buildSearchGrid('Результати: ' + query, items);
+          activateContent();
+        });
       }, function (msg) {
-        object.activity.loader(false); showEmpty('Помилка: ' + msg); activateContent();
+        object.activity.loader(false);
+        showEmpty('Помилка: ' + msg);
+        activateContent();
       });
     }
 
+    // ── Побудова карток ──────────────────────────────────
     function buildGrid(title, items, hasContentDetails) {
       if (!items.length) return;
       appendTitle(title);
@@ -292,9 +305,16 @@
       items.forEach(function (item) {
         var videoId  = typeof item.id === 'string' ? item.id : (item.id.videoId || '');
         var snippet  = item.snippet || {};
-        var duration = hasContentDetails ? parseDuration((item.contentDetails || {}).duration || '') : '';
-        grid.append(makeCard(videoId, snippet.title || '', snippet.channelTitle || '',
-                             bestThumb(snippet.thumbnails), duration));
+        var duration = hasContentDetails
+          ? parseDuration((item.contentDetails || {}).duration || '')
+          : '';
+        grid.append(makeCard(
+          videoId,
+          snippet.title        || '',
+          snippet.channelTitle || '',
+          bestThumb(snippet.thumbnails),
+          duration
+        ));
       });
       body.append(grid);
     }
@@ -305,29 +325,45 @@
       var grid = $('<div class="category-full"></div>');
       items.forEach(function (item) {
         var snippet = item.snippet || {};
-        grid.append(makeCard(item.id.videoId || '', snippet.title || '', snippet.channelTitle || '',
-                             bestThumb(snippet.thumbnails), parseDuration(item._duration || '')));
+        grid.append(makeCard(
+          item.id.videoId      || '',
+          snippet.title        || '',
+          snippet.channelTitle || '',
+          bestThumb(snippet.thumbnails),
+          parseDuration(item._duration || '')
+        ));
       });
       body.append(grid);
     }
 
     function appendTitle(title) {
-      body.append($('<div class="items-line__head" style="padding-top:.3em">' +
-        '<div class="items-line__title">' + escapeHtml(title) + '</div></div>'));
+      body.append($(
+        '<div class="items-line__head" style="padding-top:.3em">' +
+        '<div class="items-line__title">' + escapeHtml(title) + '</div></div>'
+      ));
     }
 
     function makeCard(videoId, title, channel, thumb, duration) {
       var card = Lampa.Template.get('card', { title: title });
       card.addClass('card--collection selector');
       card.find('.card__img').attr('src', thumb);
+
       var age = card.find('.card__age');
-      if (channel) age.text(channel).addClass('ytfeed-channel'); else age.remove();
-      if (duration) card.find('.card__view').append('<div class="card__type">' + escapeHtml(duration) + '</div>');
+      if (channel) age.text(channel).addClass('ytfeed-channel');
+      else age.remove();
+
+      if (duration) {
+        card.find('.card__view').append(
+          '<div class="card__type">' + escapeHtml(duration) + '</div>'
+        );
+      }
+
       card.on('hover:focus', function () { last_card = card[0]; scroll.update(card, true); });
       card.on('hover:enter', function () { openVideo(videoId, title); });
       return card;
     }
 
+    // ── Утиліти ──────────────────────────────────────────
     function bestThumb(t) {
       if (!t) return '';
       return (t.medium || t.high || t.default || {}).url || '';
@@ -337,7 +373,9 @@
       if (!iso) return '';
       var m = iso.match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/);
       if (!m) return '';
-      var h = parseInt(m[1] || 0), min = parseInt(m[2] || 0), s = parseInt(m[3] || 0);
+      var h   = parseInt(m[1] || 0);
+      var min = parseInt(m[2] || 0);
+      var s   = parseInt(m[3] || 0);
       return h ? h + ':' + pad(min) + ':' + pad(s) : pad(min) + ':' + pad(s);
     }
 
@@ -349,7 +387,9 @@
       return d.innerHTML;
     }
 
-    function showEmpty(text) { body.append($('<div class="ytfeed-empty"></div>').text(text)); }
+    function showEmpty(text) {
+      body.append($('<div class="ytfeed-empty"></div>').text(text));
+    }
 
     function activateContent() {
       scroll.update(body);
@@ -357,7 +397,8 @@
       else Lampa.Controller.toggle('head');
     }
 
-    this.start   = function () {
+    // ── Lifecycle ─────────────────────────────────────────
+    this.start = function () {
       Lampa.Controller.add('head', ctrl_head);
       Lampa.Controller.add('content', ctrl_content);
       Lampa.Controller.toggle(active_zone);
@@ -367,29 +408,35 @@
     this.render  = function () { return html; };
     this.destroy = function () {
       if (currentAjax) currentAjax.abort();
-      scroll.destroy(); body.remove();
+      scroll.destroy();
+      body.remove();
     };
   }
 
   Lampa.Component.add('youtube_feed', YouTubeFeed);
 
+  // ── Кнопка меню ─────────────────────────────────────────
   function addMenuButton() {
     if ($('.menu__item[data-action="youtube_feed"]').length) return;
     var btn = $(
       '<li class="menu__item selector" data-action="youtube_feed">' +
-        '<div class="menu__ico"><svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">' +
-        '<path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545' +
-        's-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814' +
-        'a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505' +
-        'a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814z' +
-        'M9.545 15.568V8.432L15.818 12l-6.273 3.568z" fill="currentColor"/></svg></div>' +
-        '<div class="menu__text">YouTube</div></li>'
+        '<div class="menu__ico">' +
+          '<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">' +
+          '<path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545' +
+          's-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814' +
+          'a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505' +
+          'a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814z' +
+          'M9.545 15.568V8.432L15.818 12l-6.273 3.568z" fill="currentColor"/></svg>' +
+        '</div>' +
+        '<div class="menu__text">YouTube</div>' +
+      '</li>'
     );
     btn.on('hover:enter', function () {
       Lampa.Activity.push({ url: '', title: 'YouTube', component: 'youtube_feed', page: 1 });
     });
     var settings = $('.menu .menu__list .menu__item[data-action="settings"]');
-    if (settings.length) settings.before(btn); else $('.menu .menu__list').eq(0).append(btn);
+    if (settings.length) settings.before(btn);
+    else $('.menu .menu__list').eq(0).append(btn);
   }
 
   if (window.appready) addMenuButton();
