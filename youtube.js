@@ -4,24 +4,24 @@
   // ═══════════════════════════════════════════════════════════
   //  ▼▼▼ ВСТАВ СВІЙ GOOGLE API КЛЮЧ СЮДИ ▼▼▼
   // ═══════════════════════════════════════════════════════════
-  var YT_API_KEY = 'AIzaSyB7nB5pUEVbHa-bGy1LN2KtzY7jU7ElazQ';
+  var YT_API_KEY = 'ВСТАВ_СВІЙ_КЛЮЧ_ТУТ';
   // ═══════════════════════════════════════════════════════════
 
-  var YT_API = 'https://www.googleapis.com/youtube/v3';
+  var YT_API     = 'https://www.googleapis.com/youtube/v3';
+  var STREAM_HOST = 'https://beta.l-vid.online'; // для отримання посилань на відео
 
-  // Piped-інстанції для отримання stream URL (по черзі при помилці)
-  var PIPED_HOSTS = [
-    'https://pipedapi.kavin.rocks',
-    'https://pipedapi.adminforge.de',
-    'https://piped-api.garudalinux.org',
-    'https://pipedapi.in.projectsegfau.lt',
-  ];
-  var pipedIdx = 0;
+  // ── Отримати URL для стріму (як в оригінальному плагіні) ──
+  function streamUrl(videoId, title) {
+    var token = Lampa.Storage.get('account_token', '');
+    var uid   = Lampa.Storage.get('lampac_unic_id', '');
+    return STREAM_HOST + '/lite/youtube' +
+           '?videoID=' + encodeURIComponent(videoId) +
+           '&title='   + encodeURIComponent(title) +
+           '&token='   + encodeURIComponent(token) +
+           '&uid='     + encodeURIComponent(uid);
+  }
 
-  function getPiped() { return PIPED_HOSTS[pipedIdx % PIPED_HOSTS.length]; }
-  function nextPiped() { pipedIdx++; }
-
-  // ── YouTube Data API ────────────────────────────────────
+  // ── YouTube Data API ─────────────────────────────────────
   function ytFetch(endpoint, params, onSuccess, onError) {
     params.key = YT_API_KEY;
     $.ajax({
@@ -32,35 +32,16 @@
       success: onSuccess,
       error: function (xhr) {
         var msg = 'Помилка API';
-        try { var e = JSON.parse(xhr.responseText); if (e.error && e.error.message) msg = e.error.message; } catch (_) {}
+        try {
+          var e = JSON.parse(xhr.responseText);
+          if (e.error && e.error.message) msg = e.error.message;
+        } catch (_) {}
         onError(msg);
       }
     });
   }
 
-  // ── Piped API — отримати stream URLs ────────────────────
-  function pipedStreams(videoId, onSuccess, onError, _attempt) {
-    var attempt = _attempt || 0;
-    if (attempt >= PIPED_HOSTS.length) { onError('Всі Piped-сервери недоступні'); return; }
-
-    $.ajax({
-      url: getPiped() + '/streams/' + videoId,
-      timeout: 10000,
-      dataType: 'json',
-      success: function (data) {
-        // data.videoStreams — масив потоків з url, quality, mimeType
-        // data.audioStreams — окремі аудіо потоки
-        // data.hls — HLS manifest URL (може бути)
-        onSuccess(data);
-      },
-      error: function () {
-        nextPiped();
-        pipedStreams(videoId, onSuccess, onError, attempt + 1);
-      }
-    });
-  }
-
-  // ── CSS ─────────────────────────────────────────────────
+  // ── CSS ──────────────────────────────────────────────────
   var cssInjected = false;
   function injectCSS() {
     if (cssInjected) return;
@@ -109,7 +90,7 @@
       { id: 'search', title: 'Пошук',   icon: ICONS.search },
     ];
 
-    // ── Контролери ────────────────────────────────────────
+    // ── Контролери ──────────────────────────────────────
     var ctrl_head = {
       toggle: function () {
         active_zone = 'head';
@@ -144,7 +125,7 @@
       back:  function () { Lampa.Activity.backward(); }
     };
 
-    // ── Створення ─────────────────────────────────────────
+    // ── Створення ───────────────────────────────────────
     this.create = function () {
       injectCSS();
 
@@ -185,7 +166,7 @@
       if (currentAjax) { currentAjax.abort(); currentAjax = null; }
     }
 
-    // ── Завантаження ──────────────────────────────────────
+    // ── Завантаження ────────────────────────────────────
     function loadHome() {
       resetBody(); object.activity.loader(true);
       ytFetch('/videos', {
@@ -240,7 +221,6 @@
         var items = data.items || [];
         if (!items.length) { showEmpty('Нічого: «' + query + '»'); activateContent(); return; }
 
-        // Отримуємо тривалість окремо
         var ids = items.map(function (i) { return i.id.videoId; }).join(',');
         ytFetch('/videos', { part: 'contentDetails', id: ids }, function (details) {
           var dur = {};
@@ -254,7 +234,7 @@
       });
     }
 
-    // ── Побудова карток ───────────────────────────────────
+    // ── Побудова карток ─────────────────────────────────
     function buildGrid(title, items, hasContentDetails) {
       if (!items.length) return;
       appendTitle(title);
@@ -300,79 +280,38 @@
       return card;
     }
 
-    // ── Відтворення через Piped → Lampa.Player ────────────
+    // ── Відтворення (як в оригінальному плагіні) ────────
     function openVideo(videoId, title) {
       if (!videoId) return;
 
-      Lampa.Loading.start(function () {});
+      var xhr;
+      Lampa.Loading.start(function () { if (xhr) xhr.abort(); });
 
-      pipedStreams(videoId, function (data) {
-        Lampa.Loading.stop();
-
-        // Piped повертає videoStreams — відео БЕЗ аудіо (adaptive)
-        // і окремий HLS url — це найпростіше що грає в більшості плеєрів
-        // Пробуємо спочатку прямий stream (відео+аудіо разом, якщо є)
-
-        var streams = (data.videoStreams || []).filter(function (s) {
-          // Шукаємо потоки де є і відео і аудіо (non-adaptive, mimeType video/mp4 без audioTrack)
-          return s.mimeType && s.mimeType.indexOf('video/mp4') !== -1 && !s.videoOnly;
-        });
-
-        // Якщо немає combined — беремо HLS manifest від Piped (він агрегує відео+аудіо)
-        var playUrl = '';
-        var playType = 'hls';
-
-        if (streams.length) {
-          // Сортуємо: найвища якість першою
-          streams.sort(function (a, b) {
-            return (parseInt(b.quality) || 0) - (parseInt(a.quality) || 0);
-          });
-
-          // Показуємо вибір якості
-          var selectItems = streams.map(function (s) {
-            return { title: (s.quality || '?') + 'p  MP4', url: s.url };
-          });
-          selectItems.push({ title: 'HLS (авто якість)', url: data.hls || '', _hls: true });
-
-          Lampa.Select.show({
-            title: 'Оберіть якість — ' + title,
-            items: selectItems,
-            onSelect: function (item) {
-              if (!item.url) { Lampa.Noty.show('Немає посилання для цієї якості'); return; }
-              doPlay(item.url, title, item._hls ? 'hls' : 'mp4');
-            },
-            onBack: function () { Lampa.Controller.toggle(active_zone); }
-          });
-
-        } else if (data.hls) {
-          // Одразу граємо HLS якщо немає combined MP4
-          doPlay(data.hls, title, 'hls');
-        } else {
-          Lampa.Noty.show('Не вдалося знайти потік для цього відео');
+      xhr = $.ajax({
+        url:      streamUrl(videoId, title),
+        timeout:  120000,
+        dataType: 'json',
+        success: function (data) {
+          Lampa.Loading.stop();
+          if (data && data.method === 'play') {
+            Lampa.Player.play(data);
+          } else if (data && data.error) {
+            Lampa.Noty.show(data.error);
+          } else {
+            Lampa.Noty.show('Не вдалося отримати посилання на відео');
+          }
+        },
+        error: function (jqXHR) {
+          Lampa.Loading.stop();
+          if (jqXHR.statusText === 'abort') return;
+          var msg = 'Помилка завантаження відео';
+          if (jqXHR.status === 0) msg = 'Таймаут — сервер не відповів';
+          Lampa.Noty.show(msg);
         }
-
-      }, function (msg) {
-        Lampa.Loading.stop();
-        Lampa.Noty.show('Помилка отримання відео: ' + msg);
       });
     }
 
-    function doPlay(url, title, type) {
-      var playerData = {
-        title:  title,
-        url:    url,
-        method: 'play',
-      };
-
-      // Якщо HLS — вказуємо тип щоб Lampa знав
-      if (type === 'hls') {
-        playerData.streams = [{ url: url, label: 'HLS' }];
-      }
-
-      Lampa.Player.play(playerData);
-    }
-
-    // ── Утиліти ───────────────────────────────────────────
+    // ── Утиліти ─────────────────────────────────────────
     function bestThumb(t) {
       if (!t) return '';
       return (t.medium || t.high || t.default || {}).url || '';
@@ -402,7 +341,7 @@
       else Lampa.Controller.toggle('head');
     }
 
-    // ── Lifecycle ─────────────────────────────────────────
+    // ── Lifecycle ────────────────────────────────────────
     this.start = function () {
       Lampa.Controller.add('head', ctrl_head);
       Lampa.Controller.add('content', ctrl_content);
