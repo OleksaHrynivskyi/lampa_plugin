@@ -1,35 +1,94 @@
 (function () {
   'use strict';
 
-  // ═══════════════════════════════════════════════════════════
-  //  ▼▼▼ ВСТАВ СВІЙ GOOGLE API КЛЮЧ СЮДИ ▼▼▼
-  // ═══════════════════════════════════════════════════════════
-  var YT_API_KEY = 'AIzaSyB7nB5pUEVbHa-bGy1LN2KtzY7jU7ElazQ';
-  // ═══════════════════════════════════════════════════════════
+  var YT_API_KEY  = 'AIzaSyB7nB5pUEVbHa-bGy1LN2KtzY7jU7ElazQ';
+  var YT_API      = 'https://www.googleapis.com/youtube/v3';
 
-  var YT_API     = 'https://www.googleapis.com/youtube/v3';
-  var STREAM_HOST = 'https://beta.l-vid.online'; // для отримання посилань на відео
+  // ── Список Invidious серверів (fallback по черзі) ──────
+  var INVIDIOUS_INSTANCES = [
+    'https://inv.nadeko.net',
+    'https://invidious.nerdvpn.de',
+    'https://iv.datura.network',
+    'https://invidious.privacydev.net',
+  ];
 
-  // ── Отримати URL для стріму (як в оригінальному плагіні) ──
-  function streamUrl(videoId, title) {
-    var token = Lampa.Storage.get('account_token', '');
-    var uid   = Lampa.Storage.get('lampac_unic_id', '');
-    return STREAM_HOST + '/lite/youtube' +
-           '?videoID=' + encodeURIComponent(videoId) +
-           '&title='   + encodeURIComponent(title) +
-           '&token='   + encodeURIComponent(token) +
-           '&uid='     + encodeURIComponent(uid);
+  function tryInvidious(videoId, title, instanceIndex) {
+    if (instanceIndex >= INVIDIOUS_INSTANCES.length) {
+      Lampa.Loading.stop();
+      Lampa.Noty.show('Всі Invidious сервери недоступні. Спробуйте пізніше.');
+      return;
+    }
+
+    var host = INVIDIOUS_INSTANCES[instanceIndex];
+
+    $.ajax({
+      url:      host + '/api/v1/videos/' + videoId,
+      timeout:  12000,
+      dataType: 'json',
+      success:  function (data) {
+        Lampa.Loading.stop();
+
+        // Збираємо формати: спочатку adaptiveFormats, потім formatStreams
+        var formats = []
+          .concat(data.adaptiveFormats || [])
+          .concat(data.formatStreams   || [])
+          .filter(function (f) {
+            return f.url && f.type && f.type.indexOf('video/mp4') !== -1;
+          })
+          .sort(function (a, b) {
+            // Сортуємо за якістю (resolution або bitrate)
+            var qa = parseInt((a.resolution || '0').replace('p', '')) || (a.bitrate || 0);
+            var qb = parseInt((b.resolution || '0').replace('p', '')) || (b.bitrate || 0);
+            return qb - qa;
+          });
+
+        if (!formats.length) {
+          // Цей сервер не дав форматів — пробуємо наступний
+          tryInvidious(videoId, title, instanceIndex + 1);
+          return;
+        }
+
+        // Будуємо список якостей для плеєра
+        var quality = formats.map(function (f) {
+          return {
+            url:   f.url,
+            label: f.resolution || (Math.round((f.bitrate || 0) / 1000) + 'k'),
+          };
+        });
+
+        Lampa.Player.play({
+          method:  'play',
+          title:   title,
+          url:     quality[0].url,
+          quality: quality,
+          type:    'video/mp4',
+        });
+      },
+      error: function (xhr) {
+        if (xhr.statusText === 'abort') { Lampa.Loading.stop(); return; }
+        // Сервер не відповів — пробуємо наступний
+        tryInvidious(videoId, title, instanceIndex + 1);
+      },
+    });
   }
 
-  // ── YouTube Data API ─────────────────────────────────────
+  function openVideo(videoId, title) {
+    if (!videoId) return;
+    Lampa.Loading.start(function () {
+      // Кнопка скасування
+    });
+    tryInvidious(videoId, title, 0);
+  }
+
+  // ── YouTube Data API ────────────────────────────────────
   function ytFetch(endpoint, params, onSuccess, onError) {
     params.key = YT_API_KEY;
     $.ajax({
-      url: YT_API + endpoint,
-      data: params,
-      timeout: 10000,
+      url:      YT_API + endpoint,
+      data:     params,
+      timeout:  10000,
       dataType: 'json',
-      success: onSuccess,
+      success:  onSuccess,
       error: function (xhr) {
         var msg = 'Помилка API';
         try {
@@ -37,11 +96,11 @@
           if (e.error && e.error.message) msg = e.error.message;
         } catch (_) {}
         onError(msg);
-      }
+      },
     });
   }
 
-  // ── CSS ──────────────────────────────────────────────────
+  // ── CSS ─────────────────────────────────────────────────
   var cssInjected = false;
   function injectCSS() {
     if (cssInjected) return;
@@ -70,7 +129,7 @@
   };
 
   // ═══════════════════════════════════════════════════════
-  //  Компонент
+  //  Компонент (решта коду залишається без змін)
   // ═══════════════════════════════════════════════════════
   function YouTubeFeed(object) {
     var scroll      = new Lampa.Scroll({ mask: true, over: true });
@@ -90,7 +149,6 @@
       { id: 'search', title: 'Пошук',   icon: ICONS.search },
     ];
 
-    // ── Контролери ──────────────────────────────────────
     var ctrl_head = {
       toggle: function () {
         active_zone = 'head';
@@ -125,27 +183,22 @@
       back:  function () { Lampa.Activity.backward(); }
     };
 
-    // ── Створення ───────────────────────────────────────
     this.create = function () {
       injectCSS();
-
       TABS.forEach(function (tab) {
         var btn = $('<div class="ytfeed-tab selector">' + tab.icon + '<span>' + tab.title + '</span></div>');
         if (tab.id === activeTab) btn.addClass('active');
         tabButtons[tab.id] = btn;
-
         btn.on('hover:focus',           function () { btn.addClass('focus'); last_tab = btn[0]; });
         btn.on('hover:hover',           function () { btn.addClass('focus'); });
         btn.on('hover:exit hover:blur', function () { btn.removeClass('focus'); });
         btn.on('hover:enter',           function () { switchTab(tab.id); });
         head.append(btn);
       });
-
       html.append(head);
       html.append(scroll.render());
       scroll.minus(head);
       scroll.append(body);
-
       object.activity.loader(true);
       loadHome();
       return this.render();
@@ -166,7 +219,6 @@
       if (currentAjax) { currentAjax.abort(); currentAjax = null; }
     }
 
-    // ── Завантаження ────────────────────────────────────
     function loadHome() {
       resetBody(); object.activity.loader(true);
       ytFetch('/videos', {
@@ -220,7 +272,6 @@
         object.activity.loader(false);
         var items = data.items || [];
         if (!items.length) { showEmpty('Нічого: «' + query + '»'); activateContent(); return; }
-
         var ids = items.map(function (i) { return i.id.videoId; }).join(',');
         ytFetch('/videos', { part: 'contentDetails', id: ids }, function (details) {
           var dur = {};
@@ -234,7 +285,6 @@
       });
     }
 
-    // ── Побудова карток ─────────────────────────────────
     function buildGrid(title, items, hasContentDetails) {
       if (!items.length) return;
       appendTitle(title);
@@ -270,48 +320,14 @@
       var card = Lampa.Template.get('card', { title: title });
       card.addClass('card--collection selector');
       card.find('.card__img').attr('src', thumb);
-
       var age = card.find('.card__age');
       if (channel) age.text(channel).addClass('ytfeed-channel'); else age.remove();
       if (duration) card.find('.card__view').append('<div class="card__type">' + escapeHtml(duration) + '</div>');
-
       card.on('hover:focus', function () { last_card = card[0]; scroll.update(card, true); });
       card.on('hover:enter', function () { openVideo(videoId, title); });
       return card;
     }
 
-    // ── Відтворення (як в оригінальному плагіні) ────────
-    function openVideo(videoId, title) {
-      if (!videoId) return;
-
-      var xhr;
-      Lampa.Loading.start(function () { if (xhr) xhr.abort(); });
-
-      xhr = $.ajax({
-        url:      streamUrl(videoId, title),
-        timeout:  120000,
-        dataType: 'json',
-        success: function (data) {
-          Lampa.Loading.stop();
-          if (data && data.method === 'play') {
-            Lampa.Player.play(data);
-          } else if (data && data.error) {
-            Lampa.Noty.show(data.error);
-          } else {
-            Lampa.Noty.show('Не вдалося отримати посилання на відео');
-          }
-        },
-        error: function (jqXHR) {
-          Lampa.Loading.stop();
-          if (jqXHR.statusText === 'abort') return;
-          var msg = 'Помилка завантаження відео';
-          if (jqXHR.status === 0) msg = 'Таймаут — сервер не відповів';
-          Lampa.Noty.show(msg);
-        }
-      });
-    }
-
-    // ── Утиліти ─────────────────────────────────────────
     function bestThumb(t) {
       if (!t) return '';
       return (t.medium || t.high || t.default || {}).url || '';
@@ -341,8 +357,7 @@
       else Lampa.Controller.toggle('head');
     }
 
-    // ── Lifecycle ────────────────────────────────────────
-    this.start = function () {
+    this.start   = function () {
       Lampa.Controller.add('head', ctrl_head);
       Lampa.Controller.add('content', ctrl_content);
       Lampa.Controller.toggle(active_zone);
@@ -358,7 +373,6 @@
 
   Lampa.Component.add('youtube_feed', YouTubeFeed);
 
-  // ── Кнопка меню ─────────────────────────────────────────
   function addMenuButton() {
     if ($('.menu__item[data-action="youtube_feed"]').length) return;
     var btn = $(
