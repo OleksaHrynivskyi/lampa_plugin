@@ -2,13 +2,26 @@
   'use strict';
 
   // ═══════════════════════════════════════════════════════════
-  //  ▼▼▼ ВСТАВ СВІЙ КЛЮЧ СЮДИ ▼▼▼
+  //  ▼▼▼ ВСТАВ СВІЙ GOOGLE API КЛЮЧ СЮДИ ▼▼▼
   // ═══════════════════════════════════════════════════════════
   var YT_API_KEY = 'AIzaSyB7nB5pUEVbHa-bGy1LN2KtzY7jU7ElazQ';
   // ═══════════════════════════════════════════════════════════
 
   var YT_API = 'https://www.googleapis.com/youtube/v3';
 
+  // Piped-інстанції для отримання stream URL (по черзі при помилці)
+  var PIPED_HOSTS = [
+    'https://pipedapi.kavin.rocks',
+    'https://pipedapi.adminforge.de',
+    'https://piped-api.garudalinux.org',
+    'https://pipedapi.in.projectsegfau.lt',
+  ];
+  var pipedIdx = 0;
+
+  function getPiped() { return PIPED_HOSTS[pipedIdx % PIPED_HOSTS.length]; }
+  function nextPiped() { pipedIdx++; }
+
+  // ── YouTube Data API ────────────────────────────────────
   function ytFetch(endpoint, params, onSuccess, onError) {
     params.key = YT_API_KEY;
     $.ajax({
@@ -19,16 +32,35 @@
       success: onSuccess,
       error: function (xhr) {
         var msg = 'Помилка API';
-        try {
-          var e = JSON.parse(xhr.responseText);
-          if (e.error && e.error.message) msg = e.error.message;
-        } catch (_) {}
+        try { var e = JSON.parse(xhr.responseText); if (e.error && e.error.message) msg = e.error.message; } catch (_) {}
         onError(msg);
       }
     });
   }
 
-  // ─── CSS ───────────────────────────────────────────────────
+  // ── Piped API — отримати stream URLs ────────────────────
+  function pipedStreams(videoId, onSuccess, onError, _attempt) {
+    var attempt = _attempt || 0;
+    if (attempt >= PIPED_HOSTS.length) { onError('Всі Piped-сервери недоступні'); return; }
+
+    $.ajax({
+      url: getPiped() + '/streams/' + videoId,
+      timeout: 10000,
+      dataType: 'json',
+      success: function (data) {
+        // data.videoStreams — масив потоків з url, quality, mimeType
+        // data.audioStreams — окремі аудіо потоки
+        // data.hls — HLS manifest URL (може бути)
+        onSuccess(data);
+      },
+      error: function () {
+        nextPiped();
+        pipedStreams(videoId, onSuccess, onError, attempt + 1);
+      }
+    });
+  }
+
+  // ── CSS ─────────────────────────────────────────────────
   var cssInjected = false;
   function injectCSS() {
     if (cssInjected) return;
@@ -46,17 +78,6 @@
       '.ytfeed-empty{padding:2em 1.5em;opacity:.45;font-size:1.1em}',
       '.ytfeed-channel{font-size:.75em;opacity:.6;overflow:hidden;',
       'text-overflow:ellipsis;white-space:nowrap;max-width:100%}',
-
-      // Оверлей плеєра
-      '.ytfeed-overlay{position:fixed;inset:0;background:#000;z-index:9999;',
-      'display:flex;flex-direction:column}',
-      '.ytfeed-overlay iframe{flex:1;width:100%;border:none}',
-      '.ytfeed-overlay-title{padding:.6em 1em;font-size:1em;color:#fff;',
-      'background:rgba(0,0,0,.7);flex-shrink:0;',
-      'overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
-      '.ytfeed-close-hint{position:absolute;top:.8em;right:1em;',
-      'background:rgba(0,0,0,.6);color:#fff;padding:.3em .8em;',
-      'border-radius:.4em;font-size:.85em;pointer-events:none}',
     ].join('');
     document.head.appendChild(s);
   }
@@ -67,16 +88,14 @@
     search: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M15.5 14h-.79l-.28-.27A6.47 6.47 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>',
   };
 
-  // ═══════════════════════════════════════════════════════════
+  // ═══════════════════════════════════════════════════════
   //  Компонент
-  // ═══════════════════════════════════════════════════════════
+  // ═══════════════════════════════════════════════════════
   function YouTubeFeed(object) {
-    var scroll     = new Lampa.Scroll({ mask: true, over: true });
-    var html       = $('<div></div>');
-    var head       = $('<div class="ytfeed-tabs"></div>');
-    var body       = $('<div></div>');
-    var overlay    = null;
-
+    var scroll      = new Lampa.Scroll({ mask: true, over: true });
+    var html        = $('<div></div>');
+    var head        = $('<div class="ytfeed-tabs"></div>');
+    var body        = $('<div></div>');
     var active_zone = 'content';
     var last_tab, last_card;
     var activeTab   = 'home';
@@ -90,7 +109,7 @@
       { id: 'search', title: 'Пошук',   icon: ICONS.search },
     ];
 
-    // ── Контролери ──────────────────────────────────────────
+    // ── Контролери ────────────────────────────────────────
     var ctrl_head = {
       toggle: function () {
         active_zone = 'head';
@@ -125,7 +144,7 @@
       back:  function () { Lampa.Activity.backward(); }
     };
 
-    // ── Створення ───────────────────────────────────────────
+    // ── Створення ─────────────────────────────────────────
     this.create = function () {
       injectCSS();
 
@@ -138,7 +157,6 @@
         btn.on('hover:hover',           function () { btn.addClass('focus'); });
         btn.on('hover:exit hover:blur', function () { btn.removeClass('focus'); });
         btn.on('hover:enter',           function () { switchTab(tab.id); });
-
         head.append(btn);
       });
 
@@ -149,7 +167,6 @@
 
       object.activity.loader(true);
       loadHome();
-
       return this.render();
     };
 
@@ -158,171 +175,115 @@
       activeTab = id;
       head.find('.ytfeed-tab').removeClass('active');
       if (tabButtons[id]) tabButtons[id].addClass('active');
-
       if (id === 'home')   loadHome();
       if (id === 'trend')  loadTrending();
       if (id === 'search') openSearch();
     }
 
     function resetBody() {
-      body.empty();
-      last_card = null;
+      body.empty(); last_card = null;
       if (currentAjax) { currentAjax.abort(); currentAjax = null; }
     }
 
-    // ── Дані ────────────────────────────────────────────────
-
+    // ── Завантаження ──────────────────────────────────────
     function loadHome() {
-      resetBody();
-      object.activity.loader(true);
-
-      currentAjax = ytFetch('/videos', {
-        part:       'snippet,contentDetails',
-        chart:      'mostPopular',
-        regionCode: 'UA',
-        hl:         'uk',
-        maxResults: 30,
+      resetBody(); object.activity.loader(true);
+      ytFetch('/videos', {
+        part: 'snippet,contentDetails', chart: 'mostPopular',
+        regionCode: 'UA', hl: 'uk', maxResults: 30,
       }, function (data) {
         object.activity.loader(false);
-        var items = (data.items || []);
+        var items = data.items || [];
         if (!items.length) { showEmpty('Немає даних'); activateContent(); return; }
-        buildGrid('Популярне в Україні 🇺🇦', items);
+        buildGrid('Популярне в Україні 🇺🇦', items, true);
         activateContent();
       }, function (msg) {
-        object.activity.loader(false);
-        showEmpty('Помилка: ' + msg);
-        activateContent();
+        object.activity.loader(false); showEmpty('Помилка: ' + msg); activateContent();
       });
     }
 
     function loadTrending() {
-      resetBody();
-      object.activity.loader(true);
-
-      // Музика (videoCategoryId=10) + Ігри (20)
+      resetBody(); object.activity.loader(true);
       ytFetch('/videos', {
-        part:            'snippet,contentDetails',
-        chart:           'mostPopular',
-        regionCode:      'UA',
-        hl:              'uk',
-        videoCategoryId: '10',
-        maxResults:      20,
+        part: 'snippet,contentDetails', chart: 'mostPopular',
+        regionCode: 'UA', hl: 'uk', videoCategoryId: '10', maxResults: 20,
       }, function (music) {
-        buildGrid('Музика 🎵', music.items || []);
-
+        buildGrid('Музика 🎵', music.items || [], true);
         ytFetch('/videos', {
-          part:            'snippet,contentDetails',
-          chart:           'mostPopular',
-          regionCode:      'UA',
-          hl:              'uk',
-          videoCategoryId: '20',
-          maxResults:      20,
+          part: 'snippet,contentDetails', chart: 'mostPopular',
+          regionCode: 'UA', hl: 'uk', videoCategoryId: '20', maxResults: 20,
         }, function (gaming) {
           object.activity.loader(false);
-          buildGrid('Ігри 🎮', gaming.items || []);
+          buildGrid('Ігри 🎮', gaming.items || [], true);
           activateContent();
-        }, function () {
-          object.activity.loader(false);
-          activateContent();
-        });
+        }, function () { object.activity.loader(false); activateContent(); });
       }, function (msg) {
-        object.activity.loader(false);
-        showEmpty('Помилка: ' + msg);
-        activateContent();
+        object.activity.loader(false); showEmpty('Помилка: ' + msg); activateContent();
       });
     }
 
     function openSearch() {
-      Lampa.Input.edit({
-        title:  'Пошук YouTube',
-        value:  lastSearch,
-        free:   true,
-        nosave: true,
-      }, function (value) {
-        if (value && value.trim()) {
-          lastSearch = value.trim();
-          doSearch(lastSearch);
-        } else {
-          Lampa.Controller.toggle(active_zone);
-        }
-      });
+      Lampa.Input.edit({ title: 'Пошук YouTube', value: lastSearch, free: true, nosave: true },
+        function (value) {
+          if (value && value.trim()) { lastSearch = value.trim(); doSearch(lastSearch); }
+          else Lampa.Controller.toggle(active_zone);
+        });
     }
 
     function doSearch(query) {
-      resetBody();
-      object.activity.loader(true);
-
-      currentAjax = ytFetch('/search', {
-        part:       'snippet',
-        q:          query,
-        type:       'video',
-        regionCode: 'UA',
-        hl:         'uk',
-        maxResults: 30,
+      resetBody(); object.activity.loader(true);
+      ytFetch('/search', {
+        part: 'snippet', q: query, type: 'video',
+        regionCode: 'UA', hl: 'uk', maxResults: 30,
       }, function (data) {
         object.activity.loader(false);
-        var items = (data.items || []);
-        if (!items.length) { showEmpty('Нічого не знайдено: «' + query + '»'); activateContent(); return; }
+        var items = data.items || [];
+        if (!items.length) { showEmpty('Нічого: «' + query + '»'); activateContent(); return; }
 
-        // У /search немає contentDetails — отримуємо тривалість окремим запитом
+        // Отримуємо тривалість окремо
         var ids = items.map(function (i) { return i.id.videoId; }).join(',');
-        ytFetch('/videos', {
-          part: 'contentDetails',
-          id:   ids,
-        }, function (details) {
-          var durMap = {};
-          (details.items || []).forEach(function (d) { durMap[d.id] = d.contentDetails.duration; });
-          items.forEach(function (i) { i._duration = durMap[i.id.videoId] || ''; });
+        ytFetch('/videos', { part: 'contentDetails', id: ids }, function (details) {
+          var dur = {};
+          (details.items || []).forEach(function (d) { dur[d.id] = d.contentDetails.duration; });
+          items.forEach(function (i) { i._duration = dur[i.id.videoId] || ''; });
           buildSearchGrid('Результати: ' + query, items);
           activateContent();
-        }, function () {
-          buildSearchGrid('Результати: ' + query, items);
-          activateContent();
-        });
+        }, function () { buildSearchGrid('Результати: ' + query, items); activateContent(); });
       }, function (msg) {
-        object.activity.loader(false);
-        showEmpty('Помилка пошуку: ' + msg);
-        activateContent();
+        object.activity.loader(false); showEmpty('Помилка: ' + msg); activateContent();
       });
     }
 
-    // ── Побудова сітки ──────────────────────────────────────
-
-    // Для /videos (chart) — item.id це рядок, item.snippet є
-    function buildGrid(title, items) {
+    // ── Побудова карток ───────────────────────────────────
+    function buildGrid(title, items, hasContentDetails) {
       if (!items.length) return;
       appendTitle(title);
       var grid = $('<div class="category-full"></div>');
       items.forEach(function (item) {
         var videoId  = typeof item.id === 'string' ? item.id : (item.id.videoId || '');
         var snippet  = item.snippet || {};
-        var duration = parseDuration((item.contentDetails || {}).duration || '');
-        var thumb    = bestThumb(snippet.thumbnails);
-        grid.append(makeCard(videoId, snippet.title || '', snippet.channelTitle || '', thumb, duration));
+        var duration = hasContentDetails ? parseDuration((item.contentDetails || {}).duration || '') : '';
+        grid.append(makeCard(videoId, snippet.title || '', snippet.channelTitle || '',
+                             bestThumb(snippet.thumbnails), duration));
       });
       body.append(grid);
     }
 
-    // Для /search — item.id.videoId
     function buildSearchGrid(title, items) {
       if (!items.length) return;
       appendTitle(title);
       var grid = $('<div class="category-full"></div>');
       items.forEach(function (item) {
-        var videoId  = item.id.videoId || '';
-        var snippet  = item.snippet || {};
-        var duration = parseDuration(item._duration || '');
-        var thumb    = bestThumb(snippet.thumbnails);
-        grid.append(makeCard(videoId, snippet.title || '', snippet.channelTitle || '', thumb, duration));
+        var snippet = item.snippet || {};
+        grid.append(makeCard(item.id.videoId || '', snippet.title || '', snippet.channelTitle || '',
+                             bestThumb(snippet.thumbnails), parseDuration(item._duration || '')));
       });
       body.append(grid);
     }
 
     function appendTitle(title) {
-      body.append(
-        $('<div class="items-line__head" style="padding-top:.3em">' +
-          '<div class="items-line__title">' + escapeHtml(title) + '</div></div>')
-      );
+      body.append($('<div class="items-line__head" style="padding-top:.3em">' +
+        '<div class="items-line__title">' + escapeHtml(title) + '</div></div>'));
     }
 
     function makeCard(videoId, title, channel, thumb, duration) {
@@ -331,78 +292,98 @@
       card.find('.card__img').attr('src', thumb);
 
       var age = card.find('.card__age');
-      if (channel) age.text(channel).addClass('ytfeed-channel');
-      else age.remove();
-
-      if (duration) {
-        card.find('.card__view').append(
-          '<div class="card__type">' + escapeHtml(duration) + '</div>'
-        );
-      }
+      if (channel) age.text(channel).addClass('ytfeed-channel'); else age.remove();
+      if (duration) card.find('.card__view').append('<div class="card__type">' + escapeHtml(duration) + '</div>');
 
       card.on('hover:focus', function () { last_card = card[0]; scroll.update(card, true); });
       card.on('hover:enter', function () { openVideo(videoId, title); });
-
       return card;
     }
 
-    // ── Плеєр ───────────────────────────────────────────────
-
+    // ── Відтворення через Piped → Lampa.Player ────────────
     function openVideo(videoId, title) {
       if (!videoId) return;
-      closeOverlay(); // на випадок якщо вже відкритий
 
-      // Iframe embed через youtube-nocookie.com — грає без HLS
-      var src = 'https://www.youtube-nocookie.com/embed/' + videoId +
-                '?autoplay=1&rel=0&modestbranding=1&iv_load_policy=3';
+      Lampa.Loading.start(function () {});
 
-      overlay = $([
-        '<div class="ytfeed-overlay">',
-          '<div class="ytfeed-overlay-title">' + escapeHtml(title) + '</div>',
-          '<iframe src="' + src + '" allowfullscreen allow="autoplay; fullscreen"></iframe>',
-          '<div class="ytfeed-close-hint">Esc / Назад — закрити</div>',
-        '</div>'
-      ].join(''));
+      pipedStreams(videoId, function (data) {
+        Lampa.Loading.stop();
 
-      $('body').append(overlay);
+        // Piped повертає videoStreams — відео БЕЗ аудіо (adaptive)
+        // і окремий HLS url — це найпростіше що грає в більшості плеєрів
+        // Пробуємо спочатку прямий stream (відео+аудіо разом, якщо є)
 
-      // Закрити по Esc
-      $(document).on('keydown.ytoverlay', function (e) {
-        if (e.key === 'Escape' || e.keyCode === 27) closeOverlay();
-      });
+        var streams = (data.videoStreams || []).filter(function (s) {
+          // Шукаємо потоки де є і відео і аудіо (non-adaptive, mimeType video/mp4 без audioTrack)
+          return s.mimeType && s.mimeType.indexOf('video/mp4') !== -1 && !s.videoOnly;
+        });
 
-      // Закрити по кліку на оверлей (не на iframe)
-      overlay.on('click', function (e) {
-        if ($(e.target).is('.ytfeed-overlay')) closeOverlay();
+        // Якщо немає combined — беремо HLS manifest від Piped (він агрегує відео+аудіо)
+        var playUrl = '';
+        var playType = 'hls';
+
+        if (streams.length) {
+          // Сортуємо: найвища якість першою
+          streams.sort(function (a, b) {
+            return (parseInt(b.quality) || 0) - (parseInt(a.quality) || 0);
+          });
+
+          // Показуємо вибір якості
+          var selectItems = streams.map(function (s) {
+            return { title: (s.quality || '?') + 'p  MP4', url: s.url };
+          });
+          selectItems.push({ title: 'HLS (авто якість)', url: data.hls || '', _hls: true });
+
+          Lampa.Select.show({
+            title: 'Оберіть якість — ' + title,
+            items: selectItems,
+            onSelect: function (item) {
+              if (!item.url) { Lampa.Noty.show('Немає посилання для цієї якості'); return; }
+              doPlay(item.url, title, item._hls ? 'hls' : 'mp4');
+            },
+            onBack: function () { Lampa.Controller.toggle(active_zone); }
+          });
+
+        } else if (data.hls) {
+          // Одразу граємо HLS якщо немає combined MP4
+          doPlay(data.hls, title, 'hls');
+        } else {
+          Lampa.Noty.show('Не вдалося знайти потік для цього відео');
+        }
+
+      }, function (msg) {
+        Lampa.Loading.stop();
+        Lampa.Noty.show('Помилка отримання відео: ' + msg);
       });
     }
 
-    function closeOverlay() {
-      if (overlay) {
-        overlay.remove();
-        overlay = null;
-        $(document).off('keydown.ytoverlay');
-        Lampa.Controller.toggle(active_zone);
+    function doPlay(url, title, type) {
+      var playerData = {
+        title:  title,
+        url:    url,
+        method: 'play',
+      };
+
+      // Якщо HLS — вказуємо тип щоб Lampa знав
+      if (type === 'hls') {
+        playerData.streams = [{ url: url, label: 'HLS' }];
       }
+
+      Lampa.Player.play(playerData);
     }
 
-    // ── Утиліти ─────────────────────────────────────────────
-
-    function bestThumb(thumbs) {
-      if (!thumbs) return '';
-      return (thumbs.medium || thumbs.high || thumbs.default || {}).url || '';
+    // ── Утиліти ───────────────────────────────────────────
+    function bestThumb(t) {
+      if (!t) return '';
+      return (t.medium || t.high || t.default || {}).url || '';
     }
 
-    // ISO 8601 → "1:23:45" або "23:45"
     function parseDuration(iso) {
       if (!iso) return '';
       var m = iso.match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/);
       if (!m) return '';
-      var h = parseInt(m[1] || 0);
-      var min = parseInt(m[2] || 0);
-      var s = parseInt(m[3] || 0);
-      if (h) return h + ':' + pad(min) + ':' + pad(s);
-      return pad(min) + ':' + pad(s);
+      var h = parseInt(m[1] || 0), min = parseInt(m[2] || 0), s = parseInt(m[3] || 0);
+      return h ? h + ':' + pad(min) + ':' + pad(s) : pad(min) + ':' + pad(s);
     }
 
     function pad(n) { return n < 10 ? '0' + n : String(n); }
@@ -413,9 +394,7 @@
       return d.innerHTML;
     }
 
-    function showEmpty(text) {
-      body.append($('<div class="ytfeed-empty"></div>').text(text));
-    }
+    function showEmpty(text) { body.append($('<div class="ytfeed-empty"></div>').text(text)); }
 
     function activateContent() {
       scroll.update(body);
@@ -423,52 +402,41 @@
       else Lampa.Controller.toggle('head');
     }
 
-    // ── Lifecycle ────────────────────────────────────────────
+    // ── Lifecycle ─────────────────────────────────────────
     this.start = function () {
       Lampa.Controller.add('head', ctrl_head);
       Lampa.Controller.add('content', ctrl_content);
       Lampa.Controller.toggle(active_zone);
     };
-
     this.pause   = function () {};
     this.stop    = function () {};
     this.render  = function () { return html; };
     this.destroy = function () {
       if (currentAjax) currentAjax.abort();
-      closeOverlay();
-      scroll.destroy();
-      body.remove();
+      scroll.destroy(); body.remove();
     };
   }
 
   Lampa.Component.add('youtube_feed', YouTubeFeed);
 
-  // ── Кнопка в меню ───────────────────────────────────────
+  // ── Кнопка меню ─────────────────────────────────────────
   function addMenuButton() {
     if ($('.menu__item[data-action="youtube_feed"]').length) return;
-
     var btn = $(
       '<li class="menu__item selector" data-action="youtube_feed">' +
-        '<div class="menu__ico">' +
-          '<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">' +
-            '<path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545' +
-            's-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814' +
-            'a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505' +
-            'a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814z' +
-            'M9.545 15.568V8.432L15.818 12l-6.273 3.568z" fill="currentColor"/>' +
-          '</svg>' +
-        '</div>' +
-        '<div class="menu__text">YouTube</div>' +
-      '</li>'
+        '<div class="menu__ico"><svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">' +
+        '<path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545' +
+        's-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814' +
+        'a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505' +
+        'a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814z' +
+        'M9.545 15.568V8.432L15.818 12l-6.273 3.568z" fill="currentColor"/></svg></div>' +
+        '<div class="menu__text">YouTube</div></li>'
     );
-
     btn.on('hover:enter', function () {
       Lampa.Activity.push({ url: '', title: 'YouTube', component: 'youtube_feed', page: 1 });
     });
-
     var settings = $('.menu .menu__list .menu__item[data-action="settings"]');
-    if (settings.length) settings.before(btn);
-    else $('.menu .menu__list').eq(0).append(btn);
+    if (settings.length) settings.before(btn); else $('.menu .menu__list').eq(0).append(btn);
   }
 
   if (window.appready) addMenuButton();
