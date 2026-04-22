@@ -1,41 +1,29 @@
 (function () {
   'use strict';
 
-  // ─── Публічні Invidious-сервери (використовуються по черзі) ───
-  var INVIDIOUS_HOSTS = [
-    'https://invidious.nerdvpn.de',
-    'https://invidious.privacydev.net',
-    'https://inv.nadeko.net',
-    'https://invidious.lunar.icu',
-  ];
+  // ═══════════════════════════════════════════════════════════
+  //  ▼▼▼ ВСТАВ СВІЙ КЛЮЧ СЮДИ ▼▼▼
+  // ═══════════════════════════════════════════════════════════
+  var YT_API_KEY = 'AIzaSyB7nB5pUEVbHa-bGy1LN2KtzY7jU7ElazQ';
+  // ═══════════════════════════════════════════════════════════
 
-  var hostIndex = 0;
+  var YT_API = 'https://www.googleapis.com/youtube/v3';
 
-  function getHost() {
-    return INVIDIOUS_HOSTS[hostIndex % INVIDIOUS_HOSTS.length];
-  }
-
-  function nextHost() {
-    hostIndex++;
-  }
-
-  // ─── Invidious API ─────────────────────────────────────────
-  function invApi(path) {
-    return getHost() + '/api/v1' + path;
-  }
-
-  function invFetch(path, onSuccess, onError, _attempt) {
-    var attempt = _attempt || 0;
-    if (attempt >= INVIDIOUS_HOSTS.length) { onError('Всі сервери недоступні'); return; }
-
+  function ytFetch(endpoint, params, onSuccess, onError) {
+    params.key = YT_API_KEY;
     $.ajax({
-      url: invApi(path),
+      url: YT_API + endpoint,
+      data: params,
       timeout: 10000,
       dataType: 'json',
       success: onSuccess,
-      error: function () {
-        nextHost();
-        invFetch(path, onSuccess, onError, attempt + 1);
+      error: function (xhr) {
+        var msg = 'Помилка API';
+        try {
+          var e = JSON.parse(xhr.responseText);
+          if (e.error && e.error.message) msg = e.error.message;
+        } catch (_) {}
+        onError(msg);
       }
     });
   }
@@ -49,47 +37,57 @@
     s.textContent = [
       '.ytfeed-tabs{display:flex;gap:.6em;padding:1em 1.5em .5em;flex-shrink:0}',
       '.ytfeed-tab{display:flex;align-items:center;gap:.4em;padding:.4em 1em;border-radius:1em;',
-      'background:rgba(255,255,255,.08);color:rgba(255,255,255,.6);font-size:.9em;white-space:nowrap;cursor:pointer;transition:all .2s}',
+      'background:rgba(255,255,255,.08);color:rgba(255,255,255,.6);font-size:.9em;',
+      'white-space:nowrap;cursor:pointer;transition:all .2s}',
       '.ytfeed-tab.focus{background:rgba(255,255,255,.2);color:#fff}',
       '.ytfeed-tab.active{background:#fff;color:#000}',
       '.ytfeed-tab.active.focus{background:#e0e0e0;color:#000}',
       '.ytfeed-tab svg{width:1.1em;height:1.1em;flex-shrink:0}',
       '.ytfeed-empty{padding:2em 1.5em;opacity:.45;font-size:1.1em}',
-      '.ytfeed-channel{font-size:.75em;opacity:.6;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}',
-      '.ytfeed-quality{display:flex;flex-direction:column;gap:.5em;padding:.5em 0}',
-      '.ytfeed-quality-item{padding:.6em 1.2em;border-radius:.5em;background:rgba(255,255,255,.08);',
-      'color:#fff;cursor:pointer;font-size:1em;transition:background .15s}',
-      '.ytfeed-quality-item.focus{background:rgba(255,255,255,.25)}',
+      '.ytfeed-channel{font-size:.75em;opacity:.6;overflow:hidden;',
+      'text-overflow:ellipsis;white-space:nowrap;max-width:100%}',
+
+      // Оверлей плеєра
+      '.ytfeed-overlay{position:fixed;inset:0;background:#000;z-index:9999;',
+      'display:flex;flex-direction:column}',
+      '.ytfeed-overlay iframe{flex:1;width:100%;border:none}',
+      '.ytfeed-overlay-title{padding:.6em 1em;font-size:1em;color:#fff;',
+      'background:rgba(0,0,0,.7);flex-shrink:0;',
+      'overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      '.ytfeed-close-hint{position:absolute;top:.8em;right:1em;',
+      'background:rgba(0,0,0,.6);color:#fff;padding:.3em .8em;',
+      'border-radius:.4em;font-size:.85em;pointer-events:none}',
     ].join('');
     document.head.appendChild(s);
   }
 
   var ICONS = {
     home:   '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>',
-    search: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M15.5 14h-.79l-.28-.27A6.47 6.47 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>',
     trend:  '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 6l2.29 2.29-4.88 4.88-4-4L2 16.59 3.41 18l6-6 4 4 6.3-6.29L22 12V6z"/></svg>',
+    search: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M15.5 14h-.79l-.28-.27A6.47 6.47 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>',
   };
 
   // ═══════════════════════════════════════════════════════════
   //  Компонент
   // ═══════════════════════════════════════════════════════════
   function YouTubeFeed(object) {
-    var scroll  = new Lampa.Scroll({ mask: true, over: true });
-    var html    = $('<div></div>');
-    var head    = $('<div class="ytfeed-tabs"></div>');
-    var body    = $('<div></div>');
+    var scroll     = new Lampa.Scroll({ mask: true, over: true });
+    var html       = $('<div></div>');
+    var head       = $('<div class="ytfeed-tabs"></div>');
+    var body       = $('<div></div>');
+    var overlay    = null;
 
     var active_zone = 'content';
     var last_tab, last_card;
-    var activeTab  = 'home';
-    var lastSearch = '';
-    var tabButtons = {};
-    var currentXhr = null;
+    var activeTab   = 'home';
+    var lastSearch  = '';
+    var tabButtons  = {};
+    var currentAjax = null;
 
     var TABS = [
-      { id: 'home',   title: 'Головна',  icon: ICONS.home },
-      { id: 'trend',  title: 'Тренди',   icon: ICONS.trend },
-      { id: 'search', title: 'Пошук',    icon: ICONS.search },
+      { id: 'home',   title: 'Головна', icon: ICONS.home },
+      { id: 'trend',  title: 'Тренди',  icon: ICONS.trend },
+      { id: 'search', title: 'Пошук',   icon: ICONS.search },
     ];
 
     // ── Контролери ──────────────────────────────────────────
@@ -136,10 +134,10 @@
         if (tab.id === activeTab) btn.addClass('active');
         tabButtons[tab.id] = btn;
 
-        btn.on('hover:focus',          function () { btn.addClass('focus'); last_tab = btn[0]; });
-        btn.on('hover:hover',          function () { btn.addClass('focus'); });
-        btn.on('hover:exit hover:blur',function () { btn.removeClass('focus'); });
-        btn.on('hover:enter',          function () { switchTab(tab.id); });
+        btn.on('hover:focus',           function () { btn.addClass('focus'); last_tab = btn[0]; });
+        btn.on('hover:hover',           function () { btn.addClass('focus'); });
+        btn.on('hover:exit hover:blur', function () { btn.removeClass('focus'); });
+        btn.on('hover:enter',           function () { switchTab(tab.id); });
 
         head.append(btn);
       });
@@ -169,24 +167,30 @@
     function resetBody() {
       body.empty();
       last_card = null;
-      if (currentXhr) { currentXhr.abort(); currentXhr = null; }
+      if (currentAjax) { currentAjax.abort(); currentAjax = null; }
     }
 
-    // ── Завантаження даних ──────────────────────────────────
+    // ── Дані ────────────────────────────────────────────────
 
     function loadHome() {
       resetBody();
       object.activity.loader(true);
 
-      // Популярні відео (trending загальне)
-      invFetch('/trending?type=Default&region=UA', function (data) {
+      currentAjax = ytFetch('/videos', {
+        part:       'snippet,contentDetails',
+        chart:      'mostPopular',
+        regionCode: 'UA',
+        hl:         'uk',
+        maxResults: 30,
+      }, function (data) {
         object.activity.loader(false);
-        if (!data || !data.length) { showEmpty('Немає даних'); activateContent(); return; }
-        buildGrid('Популярне', data);
+        var items = (data.items || []);
+        if (!items.length) { showEmpty('Немає даних'); activateContent(); return; }
+        buildGrid('Популярне в Україні 🇺🇦', items);
         activateContent();
-      }, function () {
+      }, function (msg) {
         object.activity.loader(false);
-        showEmpty('Сервер Invidious недоступний. Спробуйте пізніше.');
+        showEmpty('Помилка: ' + msg);
         activateContent();
       });
     }
@@ -195,29 +199,45 @@
       resetBody();
       object.activity.loader(true);
 
-      invFetch('/trending?type=Music&region=UA', function (music) {
-        buildGrid('Музика 🎵', music || []);
-        invFetch('/trending?type=Gaming&region=UA', function (gaming) {
+      // Музика (videoCategoryId=10) + Ігри (20)
+      ytFetch('/videos', {
+        part:            'snippet,contentDetails',
+        chart:           'mostPopular',
+        regionCode:      'UA',
+        hl:              'uk',
+        videoCategoryId: '10',
+        maxResults:      20,
+      }, function (music) {
+        buildGrid('Музика 🎵', music.items || []);
+
+        ytFetch('/videos', {
+          part:            'snippet,contentDetails',
+          chart:           'mostPopular',
+          regionCode:      'UA',
+          hl:              'uk',
+          videoCategoryId: '20',
+          maxResults:      20,
+        }, function (gaming) {
           object.activity.loader(false);
-          buildGrid('Ігри 🎮', gaming || []);
+          buildGrid('Ігри 🎮', gaming.items || []);
           activateContent();
         }, function () {
           object.activity.loader(false);
           activateContent();
         });
-      }, function () {
+      }, function (msg) {
         object.activity.loader(false);
-        showEmpty('Помилка завантаження');
+        showEmpty('Помилка: ' + msg);
         activateContent();
       });
     }
 
     function openSearch() {
       Lampa.Input.edit({
-        title: 'Пошук YouTube',
-        value: lastSearch,
-        free: true,
-        nosave: true
+        title:  'Пошук YouTube',
+        value:  lastSearch,
+        free:   true,
+        nosave: true,
       }, function (value) {
         if (value && value.trim()) {
           lastSearch = value.trim();
@@ -232,61 +252,86 @@
       resetBody();
       object.activity.loader(true);
 
-      invFetch('/search?q=' + encodeURIComponent(query) + '&type=video', function (data) {
+      currentAjax = ytFetch('/search', {
+        part:       'snippet',
+        q:          query,
+        type:       'video',
+        regionCode: 'UA',
+        hl:         'uk',
+        maxResults: 30,
+      }, function (data) {
         object.activity.loader(false);
-        var items = (data || []).filter(function (i) { return i.type === 'video'; });
+        var items = (data.items || []);
         if (!items.length) { showEmpty('Нічого не знайдено: «' + query + '»'); activateContent(); return; }
-        buildGrid('Результати: ' + query, items);
-        activateContent();
-      }, function () {
+
+        // У /search немає contentDetails — отримуємо тривалість окремим запитом
+        var ids = items.map(function (i) { return i.id.videoId; }).join(',');
+        ytFetch('/videos', {
+          part: 'contentDetails',
+          id:   ids,
+        }, function (details) {
+          var durMap = {};
+          (details.items || []).forEach(function (d) { durMap[d.id] = d.contentDetails.duration; });
+          items.forEach(function (i) { i._duration = durMap[i.id.videoId] || ''; });
+          buildSearchGrid('Результати: ' + query, items);
+          activateContent();
+        }, function () {
+          buildSearchGrid('Результати: ' + query, items);
+          activateContent();
+        });
+      }, function (msg) {
         object.activity.loader(false);
-        showEmpty('Помилка пошуку');
+        showEmpty('Помилка пошуку: ' + msg);
         activateContent();
       });
     }
 
-    // ── Побудова карток ─────────────────────────────────────
+    // ── Побудова сітки ──────────────────────────────────────
 
+    // Для /videos (chart) — item.id це рядок, item.snippet є
     function buildGrid(title, items) {
       if (!items.length) return;
-
-      if (title) {
-        body.append(
-          $('<div class="items-line__head" style="padding-top:.3em">'+
-            '<div class="items-line__title">' + escapeHtml(title) + '</div></div>')
-        );
-      }
-
+      appendTitle(title);
       var grid = $('<div class="category-full"></div>');
-      items.forEach(function (item) { grid.append(makeCard(item)); });
+      items.forEach(function (item) {
+        var videoId  = typeof item.id === 'string' ? item.id : (item.id.videoId || '');
+        var snippet  = item.snippet || {};
+        var duration = parseDuration((item.contentDetails || {}).duration || '');
+        var thumb    = bestThumb(snippet.thumbnails);
+        grid.append(makeCard(videoId, snippet.title || '', snippet.channelTitle || '', thumb, duration));
+      });
       body.append(grid);
     }
 
-    function makeCard(item) {
-      // Invidious: videoId, title, author, lengthSeconds, videoThumbnails[]
-      var thumb = '';
-      if (item.videoThumbnails && item.videoThumbnails.length) {
-        // Беремо medium або перший доступний
-        var tObj = item.videoThumbnails.find(function(t){ return t.quality === 'medium'; })
-                || item.videoThumbnails[0];
-        thumb = tObj.url || '';
-        // Якщо відносний URL — додаємо хост
-        if (thumb && thumb.indexOf('http') !== 0) thumb = getHost() + thumb;
-      }
+    // Для /search — item.id.videoId
+    function buildSearchGrid(title, items) {
+      if (!items.length) return;
+      appendTitle(title);
+      var grid = $('<div class="category-full"></div>');
+      items.forEach(function (item) {
+        var videoId  = item.id.videoId || '';
+        var snippet  = item.snippet || {};
+        var duration = parseDuration(item._duration || '');
+        var thumb    = bestThumb(snippet.thumbnails);
+        grid.append(makeCard(videoId, snippet.title || '', snippet.channelTitle || '', thumb, duration));
+      });
+      body.append(grid);
+    }
 
-      var duration = '';
-      if (item.lengthSeconds) {
-        var s = item.lengthSeconds;
-        duration = (s >= 3600 ? Math.floor(s/3600) + ':' : '') +
-                   pad(Math.floor((s%3600)/60)) + ':' + pad(s%60);
-      }
+    function appendTitle(title) {
+      body.append(
+        $('<div class="items-line__head" style="padding-top:.3em">' +
+          '<div class="items-line__title">' + escapeHtml(title) + '</div></div>')
+      );
+    }
 
-      var card = Lampa.Template.get('card', { title: item.title || '' });
+    function makeCard(videoId, title, channel, thumb, duration) {
+      var card = Lampa.Template.get('card', { title: title });
       card.addClass('card--collection selector');
       card.find('.card__img').attr('src', thumb);
 
       var age = card.find('.card__age');
-      if (item.author) age.text(item.author).addClass('ytfeed-channel');
+      if (channel) age.text(channel).addClass('ytfeed-channel');
       else age.remove();
 
       if (duration) {
@@ -296,112 +341,71 @@
       }
 
       card.on('hover:focus', function () { last_card = card[0]; scroll.update(card, true); });
-      card.on('hover:enter', function () { openVideo(item); });
+      card.on('hover:enter', function () { openVideo(videoId, title); });
 
       return card;
     }
 
-    // ── Відтворення ─────────────────────────────────────────
+    // ── Плеєр ───────────────────────────────────────────────
 
-    function openVideo(item) {
-      var id = item.videoId;
-      if (!id) return;
+    function openVideo(videoId, title) {
+      if (!videoId) return;
+      closeOverlay(); // на випадок якщо вже відкритий
 
-      Lampa.Loading.start(function () {
-        if (currentXhr) currentXhr.abort();
+      // Iframe embed через youtube-nocookie.com — грає без HLS
+      var src = 'https://www.youtube-nocookie.com/embed/' + videoId +
+                '?autoplay=1&rel=0&modestbranding=1&iv_load_policy=3';
+
+      overlay = $([
+        '<div class="ytfeed-overlay">',
+          '<div class="ytfeed-overlay-title">' + escapeHtml(title) + '</div>',
+          '<iframe src="' + src + '" allowfullscreen allow="autoplay; fullscreen"></iframe>',
+          '<div class="ytfeed-close-hint">Esc / Назад — закрити</div>',
+        '</div>'
+      ].join(''));
+
+      $('body').append(overlay);
+
+      // Закрити по Esc
+      $(document).on('keydown.ytoverlay', function (e) {
+        if (e.key === 'Escape' || e.keyCode === 27) closeOverlay();
       });
 
-      // Отримуємо деталі відео з Invidious — там є adaptiveFormats та formatStreams
-      currentXhr = $.ajax({
-        url: invApi('/videos/' + id),
-        timeout: 15000,
-        dataType: 'json',
-        success: function (data) {
-          Lampa.Loading.stop();
-          currentXhr = null;
-
-          // Збираємо MP4-потоки (formatStreams — прямі MP4, без адаптивного стрімінгу)
-          var streams = (data.formatStreams || []).filter(function (f) {
-            return f.container === 'mp4';
-          });
-
-          // Якщо немає — беремо з adaptiveFormats тільки відео+аудіо разом (itag 18, 22)
-          if (!streams.length) {
-            streams = (data.adaptiveFormats || []).filter(function (f) {
-              return f.container === 'mp4' && f.type && f.type.indexOf('video') !== -1;
-            });
-          }
-
-          if (!streams.length) {
-            Lampa.Noty.show('Не вдалося знайти MP4-потік для цього відео');
-            return;
-          }
-
-          // Сортуємо по якості (більше — краще)
-          streams.sort(function (a, b) {
-            return (parseInt(b.resolution) || 0) - (parseInt(a.resolution) || 0);
-          });
-
-          if (streams.length === 1) {
-            playStream(streams[0], data.title);
-          } else {
-            showQualityPicker(streams, data.title);
-          }
-        },
-        error: function (jqXHR) {
-          Lampa.Loading.stop();
-          currentXhr = null;
-          if (jqXHR.statusText === 'abort') return;
-          // Якщо поточний сервер не відповів — пробуємо наступний
-          nextHost();
-          openVideo(item);
-        }
+      // Закрити по кліку на оверлей (не на iframe)
+      overlay.on('click', function (e) {
+        if ($(e.target).is('.ytfeed-overlay')) closeOverlay();
       });
     }
 
-    function playStream(stream, title) {
-      Lampa.Player.play({
-        title:  title || '',
-        url:    stream.url,
-        method: 'play',
-      });
-    }
-
-    function showQualityPicker(streams, title) {
-      // Показуємо меню вибору якості через Lampa.Select
-      var items = streams.map(function (s) {
-        return {
-          title: s.qualityLabel || s.resolution || s.itag || 'MP4',
-          stream: s
-        };
-      });
-
-      Lampa.Select.show({
-        title: 'Оберіть якість',
-        items: items,
-        onSelect: function (item) {
-          playStream(item.stream, title);
-        },
-        onBack: function () {
-          Lampa.Controller.toggle('content');
-        }
-      });
+    function closeOverlay() {
+      if (overlay) {
+        overlay.remove();
+        overlay = null;
+        $(document).off('keydown.ytoverlay');
+        Lampa.Controller.toggle(active_zone);
+      }
     }
 
     // ── Утиліти ─────────────────────────────────────────────
 
-    function showEmpty(text) {
-      body.append($('<div class="ytfeed-empty"></div>').text(text));
+    function bestThumb(thumbs) {
+      if (!thumbs) return '';
+      return (thumbs.medium || thumbs.high || thumbs.default || {}).url || '';
     }
 
-    function activateContent() {
-      scroll.update(body);
-      if (body.find('.selector').length) {
-        Lampa.Controller.toggle('content');
-      } else {
-        Lampa.Controller.toggle('head');
-      }
+    // ISO 8601 → "1:23:45" або "23:45"
+    function parseDuration(iso) {
+      if (!iso) return '';
+      var m = iso.match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/);
+      if (!m) return '';
+      var h = parseInt(m[1] || 0);
+      var min = parseInt(m[2] || 0);
+      var s = parseInt(m[3] || 0);
+      if (h) return h + ':' + pad(min) + ':' + pad(s);
+      return pad(min) + ':' + pad(s);
     }
+
+    function pad(n) { return n < 10 ? '0' + n : String(n); }
 
     function escapeHtml(str) {
       var d = document.createElement('div');
@@ -409,8 +413,14 @@
       return d.innerHTML;
     }
 
-    function pad(n) {
-      return n < 10 ? '0' + n : String(n);
+    function showEmpty(text) {
+      body.append($('<div class="ytfeed-empty"></div>').text(text));
+    }
+
+    function activateContent() {
+      scroll.update(body);
+      if (body.find('.selector').length) Lampa.Controller.toggle('content');
+      else Lampa.Controller.toggle('head');
     }
 
     // ── Lifecycle ────────────────────────────────────────────
@@ -424,7 +434,8 @@
     this.stop    = function () {};
     this.render  = function () { return html; };
     this.destroy = function () {
-      if (currentXhr) currentXhr.abort();
+      if (currentAjax) currentAjax.abort();
+      closeOverlay();
       scroll.destroy();
       body.remove();
     };
